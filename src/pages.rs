@@ -256,11 +256,13 @@ pub enum Action {
     ToggleWifi,
     RefreshWifi,
     /// Połącz z siecią Wi-Fi na wskazanym urządzeniu.
+    /// `known` = istnieje zapisany profil (sekrety są już w NetworkManagerze).
     ConnectWifi {
         device: String,
         ssid: String,
         security: Security,
         hidden: bool,
+        known: bool,
     },
     ConnectEthernet(String),
     DisconnectDevice(String),
@@ -1440,6 +1442,7 @@ fn network(app: &SettingsApp) -> Vec<Group> {
                         ssid: net.ssid.clone(),
                         security: net.security,
                         hidden: false,
+                        known: net.known,
                     }
                 };
                 wifi_rows.push(row_sub(net.ssid.clone(), subtitle, control, action));

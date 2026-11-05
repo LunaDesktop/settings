@@ -14,9 +14,9 @@ use libluna_i18n::tr;
 use libluna_render::wallpaper::decode_png;
 use libluna_render::{ImageData, Scene, TextEngine};
 use libluna_widgets::{
-    clipboard_command, paint_icon, ActionRow, Button, ButtonVariant, CheckButton, ControlsSide,
-    Entry, HeaderBar, IconName, PaintCtx, PreferencesGroup, PreferencesPage, Slider, Switch,
-    TextClipboardCommand, TitleAlign, ViewSwitcher, WindowControl,
+    clipboard_command, hover_fill, paint_icon, ActionRow, Button, ButtonVariant, CheckButton,
+    ControlsSide, Entry, HeaderBar, IconName, PaintCtx, PreferencesGroup, PreferencesPage, Slider,
+    Switch, TextClipboardCommand, TitleAlign, ViewSwitcher, WindowControl,
 };
 
 use crate::app::{AccountField, AccountForm, SettingsApp, TextPasteTarget};
@@ -272,8 +272,11 @@ fn paint_displays_hero(app: &SettingsApp, ctx: &mut PaintCtx, hero: Rect) {
         .zip(monitor_tile_rects(hero_inner(hero), &tiles))
         .enumerate()
     {
+        let hovered = app.pointer.is_some_and(|p| rect.contains(p)) && dragged != Some(index);
         let fill = if dragged == Some(index) {
             theme.colors.accent.scale_alpha(0.16)
+        } else if hovered {
+            hover_fill(&theme)
         } else {
             theme.colors.shade
         };
@@ -651,6 +654,7 @@ pub fn paint(app: &SettingsApp, scene: &mut Scene, size: Size, theme: &Theme, te
                 rect,
                 index + 1 == group.rows.len(),
                 app.icons.theme,
+                app.pointer,
             );
         }
     }
@@ -696,8 +700,51 @@ fn preferences_page(groups: &[Group]) -> PreferencesPage {
     page
 }
 
-fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_theme: IconTheme) {
+/// Czy kliknięcie w dowolnym miejscu wiersza wykonuje jego akcję?
+/// Tylko takie wiersze podświetlają się pod kursorem w całości.
+fn row_is_clickable(row: &pages::Row) -> bool {
+    match &row.control {
+        Control::None | Control::Value(_) => row.action != Action::None,
+        Control::Select { .. }
+        | Control::Switch(_)
+        | Control::Check(_)
+        | Control::Wallpaper { .. } => true,
+        _ => false,
+    }
+}
+
+/// Przycisk dialogu z podświetleniem wyliczonym z pozycji kursora.
+fn dialog_button(
+    app: &SettingsApp,
+    rect: Rect,
+    label: impl Into<String>,
+    variant: ButtonVariant,
+) -> Button {
+    let mut button = Button::new(label).variant(variant);
+    button.set_hovered(app.pointer.is_some_and(|p| rect.contains(p)));
+    button
+}
+
+fn paint_row(
+    ctx: &mut PaintCtx,
+    row: &pages::Row,
+    rect: Rect,
+    last: bool,
+    icon_theme: IconTheme,
+    pointer: Option<Point>,
+) {
     let theme = *ctx.theme;
+    let hovered = pointer.is_some_and(|p| rect.contains(p));
+    if hovered && row_is_clickable(row) {
+        let highlight = Rect::from_xywh(
+            rect.x() + 6.0,
+            rect.y() + 2.0,
+            (rect.width() - 12.0).max(0.0),
+            (rect.height() - 4.0).max(0.0),
+        );
+        ctx.scene
+            .fill_rounded_rect(highlight, theme.radius.small, hover_fill(&theme));
+    }
     if !last {
         ctx.scene.fill_rect(
             Rect::from_xywh(
@@ -735,6 +782,7 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
     }
     let suffix = action_row.paint(ctx, rect, width);
     let control = control_rect(&row.control, rect, &theme, ctx.text);
+    let control_hovered = pointer.is_some_and(|p| control.contains(p));
     match &row.control {
         Control::None => {}
         Control::Value(value) => ctx.label_right(
@@ -745,7 +793,11 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
             weight::NORMAL,
             theme.colors.text,
         ),
-        Control::Switch(on) => Switch::new(*on).paint(ctx, control),
+        Control::Switch(on) => {
+            let mut switch = Switch::new(*on);
+            switch.set_hovered(control_hovered);
+            switch.paint(ctx, control);
+        }
         Control::Slider { value, .. } => {
             let percent = (value * 100.0).round() as i64;
             ctx.label_right(
@@ -763,6 +815,8 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
         } => {
             let mut switcher = ViewSwitcher::new(options.clone());
             switcher.set_selected(*selected);
+            let hover = pointer.and_then(|p| switcher.index_at(control, p));
+            switcher.set_hovered(hover);
             switcher.paint(ctx, control);
         }
         Control::Accents { selected, .. } => {
@@ -772,6 +826,20 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
                     swatch.width() / 2.0,
                     libluna_core::Accent::ALL[index].color(),
                 );
+                if pointer.is_some_and(|p| swatch.contains(p)) {
+                    let ring = Rect::from_xywh(
+                        swatch.x() - 2.0,
+                        swatch.y() - 2.0,
+                        swatch.width() + 4.0,
+                        swatch.height() + 4.0,
+                    );
+                    ctx.scene.stroke_rounded_rect(
+                        ring,
+                        ring.width() / 2.0,
+                        2.0,
+                        theme.colors.text.scale_alpha(0.55),
+                    );
+                }
                 if index == *selected {
                     let ring = Rect::from_xywh(
                         swatch.x() - 2.0,
@@ -787,10 +855,12 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
         Control::Check(checked) => {
             let mut check = CheckButton::new(String::new());
             check.set_checked(*checked);
+            check.set_hovered(control_hovered);
             check.paint(ctx, control);
         }
         Control::Select { value } => {
-            let button = Button::new(value.clone()).dropdown(true);
+            let mut button = Button::new(value.clone()).dropdown(true);
+            button.set_hovered(control_hovered);
             button.paint(ctx, control);
         }
         Control::IconStrip(icons) => {
@@ -819,6 +889,14 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
                     let inner = Rect::from_xywh(r.x() + 4.0, r.y() + 4.0, 12.0, 12.0);
                     paint_icon(ctx, *icon, inner, theme.colors.accent);
                 }
+                if pointer.is_some_and(|p| r.contains(p)) {
+                    ctx.scene.stroke_rounded_rect(
+                        r,
+                        theme.radius.small,
+                        1.5,
+                        theme.colors.text.scale_alpha(0.55),
+                    );
+                }
             }
         }
         Control::ThemePreview { accent, icons } => {
@@ -826,13 +904,22 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
         }
         Control::Wallpaper { path, selected } => {
             paint_wallpaper_control(ctx, control, path, *selected, &theme);
+            if control_hovered {
+                ctx.scene.stroke_rounded_rect(
+                    control,
+                    theme.radius.small,
+                    1.5,
+                    theme.colors.text.scale_alpha(0.55),
+                );
+            }
         }
         Control::Button { label, suggested } => {
-            let button = Button::new(label.clone()).variant(if *suggested {
+            let mut button = Button::new(label.clone()).variant(if *suggested {
                 ButtonVariant::Suggested
             } else {
                 ButtonVariant::Default
             });
+            button.set_hovered(control_hovered);
             button.paint(ctx, control);
         }
         Control::Buttons {
@@ -842,11 +929,13 @@ fn paint_row(ctx: &mut PaintCtx, row: &pages::Row, rect: Rect, last: bool, icon_
                 .into_iter()
                 .enumerate()
             {
-                let button = Button::new(labels[index].clone()).variant(if index == *suggested {
-                    ButtonVariant::Suggested
-                } else {
-                    ButtonVariant::Default
-                });
+                let mut button =
+                    Button::new(labels[index].clone()).variant(if index == *suggested {
+                        ButtonVariant::Suggested
+                    } else {
+                        ButtonVariant::Default
+                    });
+                button.set_hovered(pointer.is_some_and(|p| rect.contains(p)));
                 button.paint(ctx, rect);
             }
         }
@@ -1143,6 +1232,9 @@ pub fn handle_events(
                 }
                 app.hover_control = header_bar.control_at(lay.header, theme, *position);
                 app.info_hover = info_button_rect(&lay, theme).contains(*position);
+                app.pointer = Some(*position);
+                let nav_rect = nav_content(app, &lay);
+                app.nav.hover_at(nav_rect, Some(*position), theme);
                 if let Some((kind, track)) = app.drag {
                     let value = Slider::new(0.0).value_at(track, *position);
                     let percent = (value * 100.0).round() as u8;
@@ -1160,6 +1252,9 @@ pub fn handle_events(
             Event::PointerLeave => {
                 app.hover_control = None;
                 app.info_hover = false;
+                app.pointer = None;
+                let nav_rect = nav_content(app, &lay);
+                app.nav.hover_at(nav_rect, None, theme);
                 app.drag = None;
             }
             Event::PointerButton(button) if button.state == ButtonState::Pressed => {
@@ -1918,10 +2013,9 @@ fn paint_admin(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
             theme.colors.dim_text,
         );
     }
-    Button::new(tr("Apply changes"))
-        .variant(ButtonVariant::Suggested)
+    dialog_button(app, lay.save, tr("Apply changes"), ButtonVariant::Suggested)
         .paint(ctx, lay.save);
-    Button::new(tr("Cancel")).paint(ctx, lay.cancel);
+    dialog_button(app, lay.cancel, tr("Cancel"), ButtonVariant::Default).paint(ctx, lay.cancel);
 }
 
 /// Układ formularza konta (modal wyśrodkowany).
@@ -2141,10 +2235,8 @@ fn paint_account(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
         crate::app::AccountMode::AddUser => tr("Create account"),
         crate::app::AccountMode::ChangePassword { .. } => tr("Change password"),
     };
-    Button::new(submit_label)
-        .variant(ButtonVariant::Suggested)
-        .paint(ctx, lay.submit);
-    Button::new(tr("Cancel")).paint(ctx, lay.cancel);
+    dialog_button(app, lay.submit, submit_label, ButtonVariant::Suggested).paint(ctx, lay.submit);
+    dialog_button(app, lay.cancel, tr("Cancel"), ButtonVariant::Default).paint(ctx, lay.cancel);
 }
 
 fn paint_editor(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
@@ -2170,10 +2262,8 @@ fn paint_editor(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
     let mut entry = editor.entry.clone();
     entry.set_focused(true);
     entry.paint(ctx, lay.entry);
-    Button::new(tr("Save"))
-        .variant(ButtonVariant::Suggested)
-        .paint(ctx, lay.save);
-    Button::new(tr("Cancel")).paint(ctx, lay.cancel);
+    dialog_button(app, lay.save, tr("Save"), ButtonVariant::Suggested).paint(ctx, lay.save);
+    dialog_button(app, lay.cancel, tr("Cancel"), ButtonVariant::Default).paint(ctx, lay.cancel);
 }
 
 // ── Nagrywanie skrótu klawiszowego ──
@@ -2327,6 +2417,7 @@ fn paint_info_sheet(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
                 rect,
                 index + 1 == group.rows.len(),
                 app.icons.theme,
+                app.pointer,
             );
         }
     }
@@ -2891,14 +2982,18 @@ fn paint_wallpaper_picker(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
         .selected_path()
         .map(|path| path.is_dir())
         .unwrap_or(false);
-    Button::new(if selected_is_dir {
-        tr("Open")
-    } else {
-        tr("Choose")
-    })
-    .variant(ButtonVariant::Suggested)
+    dialog_button(
+        app,
+        lay.choose,
+        if selected_is_dir {
+            tr("Open")
+        } else {
+            tr("Choose")
+        },
+        ButtonVariant::Suggested,
+    )
     .paint(ctx, lay.choose);
-    Button::new(tr("Cancel")).paint(ctx, lay.cancel);
+    dialog_button(app, lay.cancel, tr("Cancel"), ButtonVariant::Default).paint(ctx, lay.cancel);
 
     if picker.more {
         paint_wallpaper_sheet(app, ctx, size, &lay, &theme);
@@ -3447,10 +3542,8 @@ fn paint_wifi_prompt(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
             theme.colors.dim_text,
         );
     }
-    Button::new(tr("Connect"))
-        .variant(ButtonVariant::Suggested)
-        .paint(ctx, lay.save);
-    Button::new(tr("Cancel")).paint(ctx, lay.cancel);
+    dialog_button(app, lay.save, tr("Connect"), ButtonVariant::Suggested).paint(ctx, lay.save);
+    dialog_button(app, lay.cancel, tr("Cancel"), ButtonVariant::Default).paint(ctx, lay.cancel);
 }
 
 // ── Formularz IPv4 połączenia przewodowego ──
@@ -3681,10 +3774,8 @@ fn paint_wired_editor(app: &SettingsApp, ctx: &mut PaintCtx, size: Size) {
         weight::NORMAL,
         hint.1,
     );
-    Button::new(tr("Save"))
-        .variant(ButtonVariant::Suggested)
-        .paint(ctx, lay.save);
-    Button::new(tr("Cancel")).paint(ctx, lay.cancel);
+    dialog_button(app, lay.save, tr("Save"), ButtonVariant::Suggested).paint(ctx, lay.save);
+    dialog_button(app, lay.cancel, tr("Cancel"), ButtonVariant::Default).paint(ctx, lay.cancel);
 }
 
 #[cfg(test)]

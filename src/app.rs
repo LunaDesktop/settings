@@ -632,6 +632,9 @@ pub struct SettingsApp {
     pub network_monitor: Monitor,
     pub network_next: std::time::Instant,
     pub wifi_prompt: Option<WifiPrompt>,
+    /// Sieć łączona bez pytania o hasło (zapisany profil). Gdy aktywacja odrzuci
+    /// zapisane sekrety, pokazujemy formularz hasła dla tego samego SSID.
+    pub wifi_retry: Option<(String, String, Security, bool)>,
     /// Formularz IPv4 połączenia przewodowego.
     pub wired_editor: Option<WiredEditor>,
     /// Operacja sieciowa w tle (połączenie/rozłączenie).
@@ -690,6 +693,8 @@ pub struct SettingsApp {
     pub status_until: Option<std::time::Instant>,
     pub pending: Pending,
     pub hover_control: Option<WindowControl>,
+    /// Ostatnia pozycja kursora — do podświetlania wierszy i kontrolek.
+    pub pointer: Option<Point>,
     /// Kursor nad przyciskiem Info w nagłówku.
     pub info_hover: bool,
     /// Opis działającej usługi powiadomień (albo „Nie działa”).
@@ -833,6 +838,7 @@ impl SettingsApp {
             network_monitor: Monitor::spawn(),
             network_next: std::time::Instant::now(),
             wifi_prompt: None,
+            wifi_retry: None,
             wired_editor: None,
             network_pending: None,
             bluetooth: bluetooth::Snapshot::default(),
@@ -863,6 +869,7 @@ impl SettingsApp {
             status_until: None,
             pending: Pending::default(),
             hover_control: None,
+            pointer: None,
             info_hover: false,
             notification_daemon: String::new(),
             notification_check_at: std::time::Instant::now(),
@@ -1510,6 +1517,7 @@ impl SettingsApp {
                     return;
                 };
                 // Bez skanu nie znamy zabezpieczenia — zakładamy WPA2 i pytamy o hasło.
+                self.wifi_retry = None;
                 self.wifi_prompt = Some(WifiPrompt::new(value, device, Security::Wpa2, true));
             }
             EditorPurpose::VpnImport => {
@@ -1908,17 +1916,29 @@ impl SettingsApp {
         }
     }
 
-    /// Łączy z siecią; sieci zabezpieczone otwierają formularz hasła.
-    fn connect_wifi(&mut self, device: String, ssid: String, security: Security, hidden: bool) {
-        if security.needs_password() {
+    /// Łączy z siecią. Hasła pytamy tylko dla **nowych** sieci — zapisany profil
+    /// ma już sekrety i powinien łączyć się jednym kliknięciem. Jeśli zapisane
+    /// sekrety okażą się nieaktualne, `finish_network` otworzy formularz hasła.
+    fn connect_wifi(
+        &mut self,
+        device: String,
+        ssid: String,
+        security: Security,
+        hidden: bool,
+        known: bool,
+    ) {
+        self.wifi_retry = None;
+        if security.needs_password() && !known {
             self.wifi_prompt = Some(WifiPrompt::new(ssid, device, security, hidden));
-        } else {
-            let rx = spawn_network(move || {
-                network::connect_wifi(&device, &ssid, security, None, hidden)
-            });
-            self.network_pending = Some(rx);
-            self.show_status(tr("Connecting…"));
+            return;
         }
+        if security.needs_password() {
+            self.wifi_retry = Some((device.clone(), ssid.clone(), security, hidden));
+        }
+        let rx =
+            spawn_network(move || network::connect_wifi(&device, &ssid, security, None, hidden));
+        self.network_pending = Some(rx);
+        self.show_status(tr("Connecting…"));
     }
 
     fn connect_ethernet(&mut self, device: String) {
@@ -2025,16 +2045,31 @@ impl SettingsApp {
         match result {
             Ok(()) => {
                 self.wifi_prompt = None;
+                self.wifi_retry = None;
                 self.network_monitor.scan();
                 self.network_next = std::time::Instant::now() + Duration::from_secs(2);
                 self.show_status(tr("Network updated"));
             }
-            Err(err) => {
-                let err = friendly_network_error(&err);
+            Err(raw) => {
+                let secret_problem = {
+                    let lower = raw.to_lowercase();
+                    lower.contains("secrets")
+                        || lower.contains("password")
+                        || lower.contains("hasło")
+                };
+                let err = friendly_network_error(&raw);
                 if !toast {
                     if let Some(prompt) = &mut self.wifi_prompt {
                         prompt.pending = None;
                         prompt.error = Some(err);
+                        return;
+                    }
+                }
+                // Zapisany profil odrzucił sekrety (np. hasło zmienione na routerze)
+                // — poproś o nie zamiast tylko pokazywać błąd.
+                if let Some((device, ssid, security, hidden)) = self.wifi_retry.take() {
+                    if secret_problem {
+                        self.wifi_prompt = Some(WifiPrompt::new(ssid, device, security, hidden));
                         return;
                     }
                 }
@@ -2469,7 +2504,8 @@ impl SettingsApp {
                 ssid,
                 security,
                 hidden,
-            } => self.connect_wifi(device, ssid, security, hidden),
+                known,
+            } => self.connect_wifi(device, ssid, security, hidden, known),
             Action::ConnectEthernet(device) => self.connect_ethernet(device),
             Action::DisconnectDevice(device) => self.disconnect_device(device),
             Action::ForgetWifi(ssid) => self.forget_wifi(ssid),
@@ -3031,7 +3067,7 @@ fn nav_entries() -> (NavList, Vec<Option<Page>>) {
             icons.push(Some(page.icon()));
         }
     }
-    let mut nav = NavList::new(entries);
+    let mut nav = NavList::new(entries).monochrome(true);
     nav.set_icons(icons);
     (nav, pages)
 }
@@ -3763,5 +3799,40 @@ mod tests {
         }
         assert!(!app.status.is_open());
         assert!(app.status.progress() < 0.01);
+    }
+
+    #[test]
+    fn rejected_saved_secrets_open_the_password_prompt() {
+        let mut app = app();
+        app.wifi_retry = Some((
+            "/dev/mock".to_owned(),
+            "Dom".to_owned(),
+            Security::Wpa2,
+            false,
+        ));
+        app.finish_network(
+            Err("secrets were required: the Wi-Fi password was rejected".to_owned()),
+            true,
+        );
+        let prompt = app.wifi_prompt.as_ref().expect("formularz hasła");
+        assert_eq!(prompt.ssid, "Dom");
+        assert!(app.wifi_retry.is_none());
+    }
+
+    #[test]
+    fn other_network_failure_does_not_open_the_prompt() {
+        let mut app = app();
+        app.wifi_retry = Some((
+            "/dev/mock".to_owned(),
+            "Dom".to_owned(),
+            Security::Wpa2,
+            false,
+        ));
+        app.finish_network(
+            Err("NetworkManager: activation failed (reason 53)".to_owned()),
+            true,
+        );
+        assert!(app.wifi_prompt.is_none());
+        assert!(app.wifi_retry.is_none());
     }
 }
