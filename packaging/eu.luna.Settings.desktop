@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+Name[pl]=Ustawienia
+Name[de]=Einstellungen
+Comment=Luna environment and system settings
+Comment[pl]=Ustawienia środowiska i systemu Luna
+Comment[de]=Umgebungs- und Systemeinstellungen für Luna
+Exec=luna-settings
+Icon=preferences-system
+Terminal=false
+Categories=Settings;System;
+Keywords=settings;system;appearance;displays;sound;power;language;
+Keywords[pl]=ustawienia;system;wygląd;ekrany;dźwięk;zasilanie;język;
+Keywords[de]=einstellungen;system;aussehen;bildschirme;ton;energie;sprache;
