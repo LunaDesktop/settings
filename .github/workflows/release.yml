@@ -52,6 +52,6 @@ jobs:
       binaries: "luna-settings"
       files: |
         packaging/eu.luna.Settings.desktop:/usr/share/applications/eu.luna.Settings.desktop:644
-      deb_depends: "libc6,libxkbcommon0,libxcursor1,libwayland-client0,luna"
-      rpm_depends: "glibc,libxkbcommon,libXcursor,libwayland-client,luna"
-      arch_depends: "glibc,libxkbcommon,libxcursor,wayland,luna"
+      deb_depends: "libc6,libxkbcommon0,libxcursor1,libwayland-client0,luna,libluna"
+      rpm_depends: "glibc,libxkbcommon,libXcursor,libwayland-client,luna,libluna"
+      arch_depends: "glibc,libxkbcommon,libxcursor,wayland,luna,libluna"
