@@ -110,6 +110,8 @@ pub enum EditorPurpose {
     PrinterUri,
     /// Ścieżka pliku profilu ICC (colord).
     ColorProfilePath,
+    /// Katalog dodawany do pulpitu.
+    DesktopFolder,
 }
 
 /// Mały edytor tekstu (np. nazwa przestrzeni roboczej).
@@ -563,6 +565,8 @@ pub struct SettingsApp {
     pub languages: Vec<(String, String)>,
 
     pub icons: IconSettings,
+    /// Ustawienia ikon pulpitu (`~/.config/luna/desktop.conf`).
+    pub desktop: libluna_core::desktop::DesktopSettings,
     /// Zestawy ikon freedesktop wykryte w systemie.
     pub icon_sets: Vec<IconSet>,
     pub lock: LockSettings,
@@ -797,6 +801,7 @@ impl SettingsApp {
             language,
             languages,
             icons,
+            desktop: libluna_core::desktop::DesktopSettings::load(),
             icon_sets: libluna_core::icons::external_icon_sets(),
             lock: LockSettings::load(),
             region: RegionSettings::load(),
@@ -1499,6 +1504,20 @@ impl SettingsApp {
         });
     }
 
+    /// Otwiera pole ścieżki katalogu pokazywanego na pulpicie.
+    pub fn open_desktop_folder_editor(&mut self) {
+        let mut entry = Entry::new(tr("Folder path"));
+        if let Some(home) = std::env::var_os("HOME") {
+            entry.set_text(home.to_string_lossy().to_string());
+        }
+        entry.set_focused(true);
+        self.editor = Some(TextEditor {
+            title: tr("Add desktop folder"),
+            entry,
+            purpose: EditorPurpose::DesktopFolder,
+        });
+    }
+
     /// Zapisuje aktywny edytor tekstowy (nazwa przestrzeni albo ukryta sieć).
     pub fn save_editor(&mut self) {
         let Some(editor) = self.editor.take() else {
@@ -1550,6 +1569,33 @@ impl SettingsApp {
                 }
                 self.run_task(PendingKind::Color, move || colors::import(&value));
                 self.show_status(tr("Importing the color profile…"));
+            }
+            EditorPurpose::DesktopFolder => {
+                if value.is_empty() {
+                    return;
+                }
+                let path = expand_home(&value);
+                if !path.is_dir() {
+                    self.show_status(tr("The selected folder does not exist"));
+                    return;
+                }
+                if self.desktop.folders.contains(&path) {
+                    self.show_status(tr("This folder is already shown"));
+                    return;
+                }
+                self.desktop.folders.push(path);
+                self.save_desktop_settings();
+            }
+        }
+    }
+
+    /// Zapisuje ustawienia pulpitu, zachowując pozycje ikon.
+    pub fn save_desktop_settings(&mut self) {
+        let positions = libluna_core::desktop::load_positions();
+        match libluna_core::desktop::save(&self.desktop, &positions) {
+            Ok(()) => self.show_status(tr("Desktop settings saved")),
+            Err(err) => {
+                self.show_status(format!("{}: {err}", tr("Could not save desktop settings")))
             }
         }
     }
@@ -2442,6 +2488,25 @@ impl SettingsApp {
             Action::OpenDesktopWallpaperPicker => self.open_desktop_wallpaper_picker(),
             Action::SetDesktopWallpaperPath(path) => self.set_desktop_wallpaper(path),
             Action::ClearDesktopWallpaper => self.clear_desktop_wallpaper(),
+            Action::AddDesktopFolder => self.open_desktop_folder_editor(),
+            Action::RemoveDesktopFolder(index) => {
+                if index < self.desktop.folders.len() {
+                    self.desktop.folders.remove(index);
+                    if self.desktop.folders.is_empty() {
+                        self.desktop.folders = vec![libluna_core::desktop::desktop_dir()];
+                    }
+                    self.save_desktop_settings();
+                }
+            }
+            Action::SetDesktopLabels(on) => {
+                self.desktop.labels = on;
+                self.save_desktop_settings();
+            }
+            Action::SetDesktopIconSize(size) => {
+                self.desktop.icon_size = size as f32;
+                self.desktop.grid = (size as f32 + 32.0).max(80.0);
+                self.save_desktop_settings();
+            }
             Action::SelectMonitor(index) => {
                 if index < self.monitors.len() {
                     self.selected_monitor = index;
@@ -3172,6 +3237,16 @@ fn control_send(line: &str) -> bool {
 /// Zamienia wielolinijkowy tekst na jedną linię (protokół `luna-control`).
 fn one_line(text: &str) -> String {
     text.replace(['\n', '\r'], " ").trim().to_owned()
+}
+
+/// Rozwija wiodące `~` do katalogu domowego użytkownika.
+fn expand_home(path: &str) -> PathBuf {
+    if path == "~" || path.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(path.trim_start_matches("~").trim_start_matches('/'));
+        }
+    }
+    PathBuf::from(path)
 }
 
 /// Uruchamia centrum ustawień.

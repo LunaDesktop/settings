@@ -248,6 +248,15 @@ pub enum Action {
     ClearDesktopWallpaper,
     /// Ustawia tapetę ekranu logowania z konkretnej ścieżki (wybór z dysku).
     SetGreeterWallpaperPath(PathBuf),
+    // — Pulpit —
+    /// Otwiera pole ścieżki nowego katalogu pokazywanego na pulpicie.
+    AddDesktopFolder,
+    /// Usuwa katalog z pulpitu (indeks w `DesktopSettings::folders`).
+    RemoveDesktopFolder(usize),
+    /// Włącza/wyłącza etykiety pod ikonami pulpitu.
+    SetDesktopLabels(bool),
+    /// Bok ikony pulpitu (48/64/80/96 px).
+    SetDesktopIconSize(u32),
     /// Ustawia strefę systemową przez `pkexec timedatectl` (wymaga autoryzacji).
     ApplySystemTimezone,
     /// Włącza/wyłącza synchronizację czasu (NTP) w systemie.
@@ -727,9 +736,59 @@ fn appearance(app: &SettingsApp) -> Vec<Group> {
         ));
     }
 
+    let mut desktop_rows = Vec::new();
+    for (index, folder) in app.desktop.folders.iter().enumerate() {
+        let label = folder
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| folder.display().to_string());
+        desktop_rows.push(row_sub(
+            label,
+            folder.display().to_string(),
+            Control::Button {
+                label: tr("Remove"),
+                suggested: false,
+            },
+            Action::RemoveDesktopFolder(index),
+        ));
+    }
+    desktop_rows.push(row_sub(
+        tr("Desktop folders"),
+        tr("Folders whose contents are shown on the desktop"),
+        Control::Button {
+            label: tr("Add folder…"),
+            suggested: false,
+        },
+        Action::AddDesktopFolder,
+    ));
+    desktop_rows.push(row_sub(
+        tr("Show icon labels"),
+        tr("File names under the icons"),
+        Control::Switch(app.desktop.labels),
+        Action::SetDesktopLabels(!app.desktop.labels),
+    ));
+    let sizes = [48u32, 64, 80, 96];
+    desktop_rows.push(row_sub(
+        tr("Desktop icon size"),
+        tr("Size of files, folders and shortcuts"),
+        Control::Segmented {
+            options: sizes.iter().map(|size| format!("{size} px")).collect(),
+            selected: sizes
+                .iter()
+                .position(|size| (*size as f32 - app.desktop.icon_size).abs() < 1.0)
+                .unwrap_or(1),
+            actions: sizes
+                .iter()
+                .map(|size| Action::SetDesktopIconSize(*size))
+                .collect(),
+        },
+        Action::None,
+    ));
+
     vec![
         group(tr("Theme"), theme_rows),
         group(tr("Wallpaper"), wallpaper_rows),
+        group(tr("Desktop"), desktop_rows),
         group(
             tr("Icons"),
             vec![
