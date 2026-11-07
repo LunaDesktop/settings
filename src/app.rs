@@ -703,6 +703,14 @@ pub struct SettingsApp {
     pub info_hover: bool,
     /// Opis działającej usługi powiadomień (albo „Nie działa”).
     pub notification_daemon: String,
+    /// Migawka `luna-security` (aktywne uprawnienia i oczekujące zgody).
+    pub security: luna::security::Snapshot,
+    /// Zapisane decyzje `~/.config/luna/security.conf`.
+    pub security_policy: luna::security::Policy,
+    /// Ostatnie wpisy `~/.local/state/luna/security.log`.
+    pub security_log: Vec<String>,
+    /// Kiedy następnym razem odświeżyć dane bezpieczeństwa.
+    pub security_next: std::time::Instant,
     /// Kiedy następnym razem sprawdzić usługę powiadomień.
     pub notification_check_at: std::time::Instant,
     /// Aktywny suwak: rodzaj i prostokąt toru (do przeciągania).
@@ -877,6 +885,10 @@ impl SettingsApp {
             pointer: None,
             info_hover: false,
             notification_daemon: String::new(),
+            security: luna::security::load_snapshot(),
+            security_policy: luna::security::Policy::load(),
+            security_log: luna::security::tail_log(20),
+            security_next: std::time::Instant::now(),
             notification_check_at: std::time::Instant::now(),
             drag: None,
             clipboard_text: None,
@@ -926,6 +938,9 @@ impl SettingsApp {
             }
             if page == Page::Notifications {
                 self.notification_check_at = std::time::Instant::now();
+            }
+            if page == Page::Security {
+                self.refresh_security();
             }
             if page == Page::Displays {
                 self.monitors = pages::monitors();
@@ -1189,6 +1204,17 @@ impl SettingsApp {
             }
             self.network = self.network_monitor.current();
         }
+        if self.page == Page::Security && std::time::Instant::now() >= self.security_next {
+            self.refresh_security();
+        }
+    }
+
+    /// Odświeża migawkę, politykę i dziennik `luna-security`.
+    pub fn refresh_security(&mut self) {
+        self.security = luna::security::load_snapshot();
+        self.security_policy = luna::security::Policy::load();
+        self.security_log = luna::security::tail_log(20);
+        self.security_next = std::time::Instant::now() + Duration::from_secs(2);
     }
 
     /// Otwiera wyszukiwany wybór dla języka, locale albo strefy.
@@ -2747,6 +2773,24 @@ impl SettingsApp {
             }
             Action::ApplyGreeter => self.apply_greeter(),
             Action::TestNotification => self.test_notification(),
+            Action::RefreshSecurity => self.refresh_security(),
+            Action::SecurityDecision { id, allow } => match luna::security::decide(&id, allow) {
+                Ok(()) => self.refresh_security(),
+                Err(err) => {
+                    self.show_status(format!("{}: {err}", tr("Could not send the decision")))
+                }
+            },
+            Action::ClearSecurityPolicy(app_name) => {
+                let mut policy = luna::security::Policy::load();
+                policy.clear(&app_name);
+                match policy.save() {
+                    Ok(()) => self.refresh_security(),
+                    Err(err) => self.show_status(format!(
+                        "{}: {err}",
+                        tr("Could not save security decisions")
+                    )),
+                }
+            }
             Action::SetBluetoothPowered { adapter, powered } => self
                 .run_task(PendingKind::Bluetooth, move || {
                     bluetooth::set_powered(&adapter, powered)
@@ -3097,6 +3141,7 @@ fn nav_entries() -> (NavList, Vec<Option<Page>>) {
                 Page::Login,
                 Page::LockScreen,
                 Page::Notifications,
+                Page::Security,
                 Page::Language,
                 Page::Workspaces,
                 Page::Accessibility,

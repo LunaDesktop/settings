@@ -25,6 +25,7 @@ pub enum Page {
     Login,
     LockScreen,
     Notifications,
+    Security,
     Language,
     Workspaces,
     Users,
@@ -43,11 +44,12 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 19] = [
+    pub const ALL: [Page; 20] = [
         Page::Appearance,
         Page::Login,
         Page::LockScreen,
         Page::Notifications,
+        Page::Security,
         Page::Language,
         Page::Workspaces,
         Page::Users,
@@ -72,6 +74,7 @@ impl Page {
             Page::Login => "login",
             Page::LockScreen => "lock-screen",
             Page::Notifications => "notifications",
+            Page::Security => "security",
             Page::Language => "language",
             Page::Workspaces => "workspaces",
             Page::Users => "users",
@@ -103,6 +106,7 @@ impl Page {
             Page::Login => "Login Screen",
             Page::LockScreen => "Lock Screen",
             Page::Notifications => "Notifications",
+            Page::Security => "Privacy and Security",
             Page::Language => "Language and Region",
             Page::Workspaces => "Workspaces",
             Page::Users => "Users",
@@ -128,6 +132,7 @@ impl Page {
             Page::Login => "Wallpaper and colors of the sign-in screen",
             Page::LockScreen => "Look of your lock screen (no administrator needed)",
             Page::Notifications => "Control notifications and history",
+            Page::Security => "Apps using microphone, camera and network",
             Page::Language => "Language, formats and time zone",
             Page::Workspaces => "Number, names and switching of workspaces",
             Page::Users => "Local accounts on this computer",
@@ -152,6 +157,7 @@ impl Page {
             Page::Login => IconName::User,
             Page::LockScreen => IconName::Star,
             Page::Notifications => IconName::Info,
+            Page::Security => IconName::Microphone,
             Page::Language => IconName::Globe,
             Page::Workspaces => IconName::Grid,
             Page::Users => IconName::User,
@@ -232,6 +238,15 @@ pub enum Action {
     SetNotificationPlacement(Placement),
     /// Wysyła testowe powiadomienie do daemona `luna-shell`.
     TestNotification,
+    /// Odświeża listę aktywności i politykę `luna-security`.
+    RefreshSecurity,
+    /// Decyzja dla oczekującej prośby `luna-security`.
+    SecurityDecision {
+        id: String,
+        allow: bool,
+    },
+    /// Usuwa zapisaną decyzję dla aplikacji.
+    ClearSecurityPolicy(String),
     SetWorkspaceCount(usize),
     EditWorkspaceName(usize),
     /// Włącza/wyłącza przełączanie przestrzeni przez dolne rogi ekranu.
@@ -559,6 +574,7 @@ pub fn groups(app: &SettingsApp) -> Vec<Group> {
     match app.page {
         Page::Appearance => appearance(app),
         Page::Notifications => notifications(app),
+        Page::Security => security(app),
         Page::Language => language(app),
         Page::Login => login(app),
         Page::LockScreen => lock_screen(app),
@@ -901,6 +917,143 @@ fn notifications(app: &SettingsApp) -> Vec<Group> {
                 info_row(
                     tr("Status is checked live"),
                     tr("If no daemon owns the name, restart luna-shell — it retries every 5 seconds"),
+                ),
+            ],
+        ),
+    ]
+}
+
+fn security(app: &SettingsApp) -> Vec<Group> {
+    let status_label = |status: luna::security::Status| match status {
+        luna::security::Status::Allowed => tr("Allowed"),
+        luna::security::Status::Ask => tr("Asking"),
+        luna::security::Status::Denied => tr("Blocked"),
+    };
+    let caps = |caps: &std::collections::BTreeSet<luna::security::Capability>| {
+        caps.iter()
+            .map(|cap| tr(cap.label()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let mut active = Vec::new();
+    for activity in &app.security.activities {
+        let mut subtitle = caps(&activity.caps);
+        if let Some(remote) = &activity.remote {
+            subtitle.push_str(" · ");
+            subtitle.push_str(remote);
+        }
+        active.push(row_sub(
+            activity.name.clone(),
+            subtitle,
+            Control::Value(status_label(activity.status)),
+            Action::None,
+        ));
+    }
+    if active.is_empty() {
+        active.push(info_row(
+            tr("No active permissions"),
+            tr("Nothing is using the microphone, camera or network right now"),
+        ));
+    }
+    active.push(row(
+        tr("Refresh"),
+        Control::Button {
+            label: tr("Refresh"),
+            suggested: false,
+        },
+        Action::RefreshSecurity,
+    ));
+
+    let mut pending = Vec::new();
+    for prompt in &app.security.prompts {
+        let mut subtitle = tr(prompt.capability.label());
+        if let Some(remote) = &prompt.remote {
+            subtitle.push_str(" · ");
+            subtitle.push_str(remote);
+        }
+        pending.push(row_sub(
+            prompt.name.clone(),
+            subtitle,
+            Control::Buttons {
+                labels: vec![tr("Allow").to_owned(), tr("Block").to_owned()],
+                actions: vec![
+                    Action::SecurityDecision {
+                        id: prompt.id.clone(),
+                        allow: true,
+                    },
+                    Action::SecurityDecision {
+                        id: prompt.id.clone(),
+                        allow: false,
+                    },
+                ],
+                suggested: 0,
+            },
+            Action::None,
+        ));
+    }
+    if pending.is_empty() {
+        pending.push(info_row(
+            tr("No pending requests"),
+            tr("No application is waiting for a decision"),
+        ));
+    }
+
+    let mut decisions = Vec::new();
+    for (allow, app_name, capabilities) in app.security_policy.entries() {
+        let decision = if allow { tr("Allowed") } else { tr("Blocked") };
+        decisions.push(row_sub(
+            app_name.clone(),
+            format!("{decision}: {}", caps(&capabilities)),
+            Control::Button {
+                label: tr("Remove"),
+                suggested: false,
+            },
+            Action::ClearSecurityPolicy(app_name),
+        ));
+    }
+    if decisions.is_empty() {
+        decisions.push(info_row(
+            tr("No saved decisions"),
+            tr("The microphone, camera and network are decided per application"),
+        ));
+    }
+
+    let mut log_rows = Vec::new();
+    for line in app.security_log.iter().rev().take(20) {
+        log_rows.push(row(line.clone(), Control::None, Action::None));
+    }
+    if log_rows.is_empty() {
+        log_rows.push(info_row(tr("No entries"), tr("The security log is empty")));
+    }
+
+    vec![
+        group(tr("Active permissions"), active),
+        group(tr("Pending requests"), pending),
+        group(tr("Saved decisions"), decisions),
+        group(tr("Activity log"), log_rows),
+        info_group(
+            tr("Information"),
+            vec![
+                info_row(
+                    tr("Panel indicator"),
+                    tr("Icons next to the clock show active microphone, camera and network; click them for details"),
+                ),
+                info_row(
+                    tr("Command line"),
+                    tr("luna-security status, log, allow and deny manage the same data"),
+                ),
+                value_row(
+                    tr("Decision file"),
+                    luna::security::Policy::path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                ),
+                value_row(
+                    tr("Log file"),
+                    luna::security::log_path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
                 ),
             ],
         ),

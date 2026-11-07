@@ -581,12 +581,12 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 [[package]]
 name = "libluna-core"
 version = "0.0.9"
-source = "git+https://github.com/LunaDesktop/libLuna.git#16874dc5da0275b4db7583abac44d09d3e6cceb7"
+source = "git+https://github.com/LunaDesktop/libLuna.git#cf1f39ad292a06193cc713a45025f243b41a46ae"
 
 [[package]]
 name = "libluna-i18n"
 version = "0.0.9"
-source = "git+https://github.com/LunaDesktop/libLuna.git#16874dc5da0275b4db7583abac44d09d3e6cceb7"
+source = "git+https://github.com/LunaDesktop/libLuna.git#cf1f39ad292a06193cc713a45025f243b41a46ae"
 dependencies = [
  "libluna-core",
 ]
@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "libluna-platform"
 version = "0.0.9"
-source = "git+https://github.com/LunaDesktop/libLuna.git#16874dc5da0275b4db7583abac44d09d3e6cceb7"
+source = "git+https://github.com/LunaDesktop/libLuna.git#cf1f39ad292a06193cc713a45025f243b41a46ae"
 dependencies = [
  "calloop",
  "libc",
@@ -608,7 +608,7 @@ dependencies = [
 [[package]]
 name = "libluna-render"
 version = "0.0.9"
-source = "git+https://github.com/LunaDesktop/libLuna.git#16874dc5da0275b4db7583abac44d09d3e6cceb7"
+source = "git+https://github.com/LunaDesktop/libLuna.git#cf1f39ad292a06193cc713a45025f243b41a46ae"
 dependencies = [
  "fontdue",
  "libluna-core",
@@ -619,7 +619,7 @@ dependencies = [
 [[package]]
 name = "libluna-widgets"
 version = "0.0.9"
-source = "git+https://github.com/LunaDesktop/libLuna.git#16874dc5da0275b4db7583abac44d09d3e6cceb7"
+source = "git+https://github.com/LunaDesktop/libLuna.git#cf1f39ad292a06193cc713a45025f243b41a46ae"
 dependencies = [
  "libluna-core",
  "libluna-render",
@@ -652,7 +652,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 [[package]]
 name = "luna"
 version = "0.0.16"
-source = "git+https://github.com/LunaDesktop/luna.git#84a5f23d3f132faa52732192b8b12c387c6f04ba"
+source = "git+https://github.com/LunaDesktop/luna.git#0015126d26ff954289fa4093db215102b6b2d342"
 dependencies = [
  "libc",
  "libluna-core",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "luna-settings"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "libluna-core",
  "libluna-i18n",
